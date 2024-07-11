@@ -1,0 +1,27 @@
+# set base mirror
+FROM samge/ai-env:cuda11.8.0-cudnn8-devel-ubuntu22.04-python3.8.18-torch2.2.0 as base
+
+# 设置工作目录
+WORKDIR /home
+
+ARG PROXY
+ENV http_proxy=${PROXY} https_proxy=${PROXY}
+
+FROM base as requirements
+
+RUN apt update -y && apt -y install wget git-lfs && \
+wget --no-check-certificate https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz && \
+mkdir -p /home/ffmpeg-release-amd64-static && \
+tar -xvf ffmpeg-release-amd64-static.tar.xz -C /home/ffmpeg-release-amd64-static --strip-components=1 && \
+rm -rf ffmpeg-release-amd64-static.tar.xz && \
+cp /home/ffmpeg-release-amd64-static/ffmpeg /usr/local/bin/ && \
+cp /home/ffmpeg-release-amd64-static/ffprobe /usr/local/bin/
+
+ENV FFMPEG_PATH=/home/ffmpeg-release-amd64-static
+
+# use known version number
+COPY requirements.txt requirements.txt
+RUN pip install -r requirements.txt
+
+# 重置代理配置
+ENV http_proxy= https_proxy=

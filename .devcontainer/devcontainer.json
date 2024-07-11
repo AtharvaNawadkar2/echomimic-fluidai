@@ -1,0 +1,12 @@
+{
+	"name": "echo_mimic",
+    "dockerComposeFile": "docker-compose.yml",
+    "service": "echo_mimic",
+    "workspaceFolder": "/app",
+    "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy",
+        "humao.rest-client",
+        "samge.vscode-samge-translate"
+    ]
+}
