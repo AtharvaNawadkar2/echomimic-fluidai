@@ -1,59 +1,42 @@
-#!/usr/bin/env python
-# -*- coding: UTF-8 -*-
-'''
-@Project ：EchoMimic
-@File    ：audio2vid.py
-@Author  ：juzhen.czy
-@Date    ：2024/3/4 17:43 
-'''
 import argparse
 import os
-
 import random
-import platform
-import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import List
 
+import av
 import cv2
 import numpy as np
 import torch
+import torchvision
 from diffusers import AutoencoderKL, DDIMScheduler
+from diffusers.pipelines.stable_diffusion import StableDiffusionPipeline
+from einops import repeat
 from omegaconf import OmegaConf
 from PIL import Image
+from torchvision import transforms
+from transformers import CLIPVisionModelWithProjection
 
 from src.models.unet_2d_condition import UNet2DConditionModel
 from src.models.unet_3d_echo import EchoUNet3DConditionModel
 from src.models.whisper.audio2feature import load_audio_model
-from src.pipelines.pipeline_echo_mimic import Audio2VideoPipeline
-from src.utils.util import save_videos_grid, crop_and_pad
+from src.pipelines.pipeline_echo_mimic_pose import AudioPose2VideoPipeline
+from src.utils.util import get_fps, read_frames, save_videos_grid, crop_and_pad
+import sys
 from src.models.face_locator import FaceLocator
 from moviepy.editor import VideoFileClip, AudioFileClip
 from facenet_pytorch import MTCNN
+from src.utils.draw_utils import FaceMeshVisualizer
+import pickle
 
-ffmpeg_path = os.getenv('FFMPEG_PATH')
-if ffmpeg_path is None and platform.system() in ['Linux', 'Darwin']:
-    try:
-        result = subprocess.run(['which', 'ffmpeg'], capture_output=True, text=True)
-        if result.returncode == 0:
-            ffmpeg_path = result.stdout.strip()
-            print(f"FFmpeg is installed at: {ffmpeg_path}")
-        else:
-            print("FFmpeg is not installed. Please download ffmpeg-static and export to FFMPEG_PATH.")
-            print("For example: export FFMPEG_PATH=/musetalk/ffmpeg-4.4-amd64-static")
-    except Exception as e:
-        pass
-
-if ffmpeg_path is not None and ffmpeg_path not in os.getenv('PATH'):
-    print("Adding FFMPEG_PATH to PATH")
-    os.environ["PATH"] = f"{ffmpeg_path}:{os.environ['PATH']}"
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="./configs/prompts/animation.yaml")
+    parser.add_argument("--config", type=str, default="./configs/prompts/animation_pose.yaml")
     parser.add_argument("-W", type=int, default=512)
     parser.add_argument("-H", type=int, default=512)
-    parser.add_argument("-L", type=int, default=1200)
+    parser.add_argument("-L", type=int, default=160)
     parser.add_argument("--seed", type=int, default=420)
     parser.add_argument("--facemusk_dilation_ratio", type=float, default=0.1)
     parser.add_argument("--facecrop_dilation_ratio", type=float, default=0.5)
@@ -74,8 +57,6 @@ def parse_args():
 def select_face(det_bboxes, probs):
     ## max face from faces that the prob is above 0.8
     ## box: xyxy
-    if det_bboxes is None or probs is None:
-        return None
     filtered_bboxes = []
     for bbox_i in range(len(det_bboxes)):
         if probs[bbox_i] > 0.8:
@@ -85,7 +66,6 @@ def select_face(det_bboxes, probs):
 
     sorted_bboxes = sorted(filtered_bboxes, key=lambda x:(x[3]-x[1]) * (x[2] - x[0]), reverse=True)
     return sorted_bboxes[0]
-
 
 
 def main():
@@ -103,7 +83,6 @@ def main():
 
     inference_config_path = config.inference_config
     infer_config = OmegaConf.load(inference_config_path)
-
 
     ############# model_init started #############
 
@@ -148,10 +127,12 @@ def main():
     )
 
     ## face locator init
-    face_locator = FaceLocator(320, conditioning_channels=1, block_out_channels=(16, 32, 96, 256)).to(
+    face_locator = FaceLocator(320, conditioning_channels=3, block_out_channels=(16, 32, 96, 256)).to(
         dtype=weight_dtype, device="cuda"
     )
     face_locator.load_state_dict(torch.load(config.face_locator_path))
+
+    visualizer = FaceMeshVisualizer(draw_iris=False, draw_mouse=False)
 
     ### load audio processor params
     audio_processor = load_audio_model(model_path=config.audio_model_path, device=device)
@@ -165,7 +146,7 @@ def main():
     sched_kwargs = OmegaConf.to_container(infer_config.noise_scheduler_kwargs)
     scheduler = DDIMScheduler(**sched_kwargs)
 
-    pipe = Audio2VideoPipeline(
+    pipe = AudioPose2VideoPipeline(
         vae=vae,
         reference_unet=reference_unet,
         denoising_unet=denoising_unet,
@@ -173,6 +154,7 @@ def main():
         face_locator=face_locator,
         scheduler=scheduler,
     )
+
     pipe = pipe.to("cuda", dtype=weight_dtype)
 
     date_str = datetime.now().strftime("%Y%m%d")
@@ -182,76 +164,68 @@ def main():
     save_dir.mkdir(exist_ok=True, parents=True)
 
     for ref_image_path in config["test_cases"].keys():
-        for audio_path in config["test_cases"][ref_image_path]:
-
-            if args.seed is not None and args.seed > -1:
-                generator = torch.manual_seed(args.seed)
+        for file_path in config["test_cases"][ref_image_path]:
+            if ".wav" in file_path:
+                audio_path = file_path
             else:
-                generator = torch.manual_seed(random.randint(100, 1000000))
+                pose_dir = file_path
 
-            ref_name = Path(ref_image_path).stem
-            audio_name = Path(audio_path).stem
-            final_fps = args.fps
+        if args.seed is not None and args.seed > -1:
+            generator = torch.manual_seed(args.seed)
+        else:
+            generator = torch.manual_seed(random.randint(100, 1000000))
 
-            #### face musk prepare
-            face_img = cv2.imread(ref_image_path)
-            face_mask = np.zeros((face_img.shape[0], face_img.shape[1])).astype('uint8')
+        ref_name = Path(ref_image_path).stem
+        audio_name = Path(audio_path).stem
+        final_fps = args.fps
 
-            det_bboxes, probs = face_detector.detect(face_img)
-            select_bbox = select_face(det_bboxes, probs)
-            if select_bbox is None:
-                face_mask[:, :] = 255
-            else:
-                xyxy = select_bbox[:4]
-                xyxy = np.round(xyxy).astype('int')
-                rb, re, cb, ce = xyxy[1], xyxy[3], xyxy[0], xyxy[2]
-                r_pad = int((re - rb) * args.facemusk_dilation_ratio)
-                c_pad = int((ce - cb) * args.facemusk_dilation_ratio)
-                face_mask[rb - r_pad : re + r_pad, cb - c_pad : ce + c_pad] = 255
+        ref_image_pil = Image.open(ref_image_path).convert("RGB")
 
-                #### face crop
-                r_pad_crop = int((re - rb) * args.facecrop_dilation_ratio)
-                c_pad_crop = int((ce - cb) * args.facecrop_dilation_ratio)
-                crop_rect = [max(0, cb - c_pad_crop), max(0, rb - r_pad_crop), min(ce + c_pad_crop, face_img.shape[1]), min(re + c_pad_crop, face_img.shape[0])]
-                print(crop_rect)
-                face_img = crop_and_pad(face_img, crop_rect)
-                face_mask = crop_and_pad(face_mask, crop_rect)
-                face_img = cv2.resize(face_img, (args.W, args.H))
-                face_mask = cv2.resize(face_mask, (args.W, args.H))
+        # ==================== face_locator =====================
+        pose_list = []
+        for index in range(len(os.listdir(pose_dir))):
+            tgt_musk_path = os.path.join(pose_dir, f"{index}.pkl")
 
-            ref_image_pil = Image.fromarray(face_img[:, :, [2, 1, 0]])
-            face_mask_tensor = torch.Tensor(face_mask).to(dtype=weight_dtype, device="cuda").unsqueeze(0).unsqueeze(0).unsqueeze(0) / 255.0
+            with open(tgt_musk_path, "rb") as f:
+                tgt_kpts = pickle.load(f)
+            tgt_musk = visualizer.draw_landmarks((args.W, args.H), tgt_kpts)
+            tgt_musk_pil = Image.fromarray(np.array(tgt_musk).astype(np.uint8)).convert('RGB')
+            pose_list.append(torch.Tensor(np.array(tgt_musk_pil)).to(dtype=weight_dtype, device="cuda").permute(2,0,1) / 255.0)
+        face_mask_tensor = torch.stack(pose_list, dim=1).unsqueeze(0)
 
-            video = pipe(
-                ref_image_pil,
-                audio_path,
-                face_mask_tensor,
-                width,
-                height,
-                args.L,
-                args.steps,
-                args.cfg,
-                generator=generator,
-                audio_sample_rate=args.sample_rate,
-                context_frames=args.context_frames,
-                fps=final_fps,
-                context_overlap=args.context_overlap
-            ).videos
 
-            video = video
-            save_videos_grid(
-                video,
-                f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}.mp4",
-                n_rows=1,
-                fps=final_fps,
-            )
+        video = pipe(
+            ref_image_pil,
+            audio_path,
+            face_mask_tensor,
+            width,
+            height,
+            args.L,
+            args.steps,
+            args.cfg,
+            generator=generator,
+            audio_sample_rate=args.sample_rate,
+            context_frames=12,
+            fps=final_fps,
+            context_overlap=3
+        ).videos
 
-            video_clip = VideoFileClip(f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}.mp4")
-            audio_clip = AudioFileClip(audio_path)
-            video_clip = video_clip.set_audio(audio_clip)
-            video_clip.write_videofile(f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}_withaudio.mp4", codec="libx264", audio_codec="aac")
-            print(f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}_withaudio.mp4")
+        video = torch.cat([video[:, :, :args.L, :, :], face_mask_tensor[:, :, :args.L, :, :].detach().cpu()], dim=-1)
+        save_videos_grid(
+            video,
+            f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}.mp4",
+            n_rows=2,
+            fps=final_fps,
+        )
+
+        from moviepy.editor import VideoFileClip, AudioFileClip
+        video_clip = VideoFileClip(f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}.mp4")
+        audio_clip = AudioFileClip(audio_path)
+        video_clip = video_clip.set_audio(audio_clip)
+        video_clip.write_videofile(f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}_withaudio.mp4", codec="libx264", audio_codec="aac")
+        print(f"{save_dir}/{ref_name}_{audio_name}_{args.H}x{args.W}_{int(args.cfg)}_{time_str}_withaudio.mp4")
 
 
 if __name__ == "__main__":
     main()
+

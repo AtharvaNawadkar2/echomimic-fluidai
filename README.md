@@ -18,9 +18,38 @@ Terminal Technology Department, Alipay, Ant Group.
 <div align='center'>
     <a href='https://badtobest.github.io/echomimic.html'><img src='https://img.shields.io/badge/Project-Page-blue'></a>
     <a href='https://huggingface.co/BadToBest/EchoMimic'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Model-yellow'></a>
-    <a href=''><img src='https://img.shields.io/badge/Paper-Arxiv-red'></a>
+    <a href='https://arxiv.org/abs/2407.08136'><img src='https://img.shields.io/badge/Paper-Arxiv-red'></a>
     <a href='assets/echomimic.png'><img src='https://badges.aleen42.com/src/wechat.svg'></a>
 </div>
+
+## &#x1F4E3; &#x1F4E3; Updates
+### 24.07.14
+#### ComfyUI Version
+
+ComfyUI version EchoMimic was provided by @smthemex at https://github.com/smthemex/ComfyUI_EchoMimic , Thanks for his contribution !!!
+
+### 24.07.13
+#### Pose Driven Released
+
+Codes and Models on pose-driven algo was released !!!
+
+#### [Video Installation Tutorial](https://www.youtube.com/watch?v=8R0lTIY7tfI) from the Community
+
+Thanks for [NewGenAI](https://www.youtube.com/@StableAIHub) who is the maker of video tutorial and @oisilener1982 who introduces it !! https://github.com/BadToBest/EchoMimic/issues/31
+
+### 24.07.12 
+#### (1) Gradio or Webui version
+There are numerous developers actively engaged in projects centered around EchoMimic, and we are compelled to express our profound gratitude for their invaluable contributions. In acknowledgment of their efforts, we are pleased to highlight a selection of exemplary repositories below. These repositories have significantly augmented the capabilities of EchoMimic, thereby enhancing its potency and versatility in application.
+
+WebUi version from @greengerong : https://github.com/greengerong/EchoMimic
+
+Gradio UI commit from @Robin021 : https://github.com/BadToBest/EchoMimic/blob/main/webgui.py
+
+Code contribution in issue from @O-O1024 : https://github.com/BadToBest/EchoMimic/issues/22
+
+#### (2) Our Paper is Released!
+
+Arxiv link:https://arxiv.org/abs/2407.08136
 
 ## Gallery
 ### Audio Driven (Sing)
@@ -181,6 +210,7 @@ Run the python inference script:
 
 ```bash
   python -u infer_audio2vid.py
+  python -u infer_audio2vid_pose.py
 ```
 
 ### Audio-Drived Algo Inference On Your Own Cases 
@@ -198,15 +228,47 @@ The run the python inference script:
   python -u infer_audio2vid.py
 ```
 
+### Motion Alignment between Ref. Img. and Driven Vid.
+
+(Firstly download the checkpoints with '_pose.pth' postfix from huggingface)
+
+Edit driver_video and ref_image to your path in demo_motion_sync.py, then run
+```bash
+  python -u demo_motion_sync.py
+```
+
+### Audio&Pose-Drived Algo Inference
+Edit ./configs/prompts/animation_pose.yaml, then run
+```bash
+  python -u infer_audio2vid_pose.py
+```
+
+### Pose-Drived Algo Inference
+Set draw_mouse=True in line 135 of infer_audio2vid_pose.py. Edit ./configs/prompts/animation_pose.yaml, then run
+```bash
+  python -u infer_audio2vid_pose.py
+```
+
+### Run the Gradio UI
+
+Thanks to the contribution from @Robin021:
+
+```bash
+
+python -u webgui.py --server_port=3000
+
+```
+
 ## Release Plans
 
 |  Status  | Milestone                                                                | ETA |
 |:--------:|:-------------------------------------------------------------------------|:--:|
-|    🚀    | The inference source code of the Audio-Driven algo meet everyone on GitHub   | 9th July, 2024 |
-|    🚀    | Pretrained models trained on English and Mandarin Chinese to be released | 9th July, 2024 |
-|    🚀    | The inference source code of the Pose-Driven algo meet everyone on GitHub   | 13th July, 2024 |
-|    🚀    | Pretrained models with better pose control to be released                | 13th July, 2024 |
+|    ✅    | The inference source code of the Audio-Driven algo meet everyone on GitHub   | 9th July, 2024 |
+|    ✅    | Pretrained models trained on English and Mandarin Chinese to be released | 9th July, 2024 |
+|    ✅    | The inference source code of the Pose-Driven algo meet everyone on GitHub   | 13th July, 2024 |
+|    ✅    | Pretrained models with better pose control to be released                | 13th July, 2024 |
 |    🚀    | Pretrained models with better sing performance to be released            | TBD |
+|    🚀    | Accelerated models to be released                                        | TBD |
 |    🚀    | Large-Scale and High-resolution Chinese-Based Talking Head Dataset       | TBD |
 
 ## Acknowledgements
@@ -219,7 +281,7 @@ If we missed any open-source projects or related articles, we would like to comp
 
 ## Citation
 
-If you find our work useful for your research, please consider citing the paper:
+If you find our work useful for your research, please consider citing the paper :
 
 ```
 @misc{chen2024echomimic,
