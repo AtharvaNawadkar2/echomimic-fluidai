@@ -1,12 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: UTF-8 -*-
-'''
-@Project ：EchoMimic
-@File    ：pipeline_echo_mimic.py
-@Author  ：juzhen.czy
-@Date    ：2024/3/4 17:44 
-'''
-# Adapted from https://github.com/magic-research/magic-animate/blob/main/magicanimate/pipelines/pipeline_animation.py
 import inspect
 import math
 from dataclasses import dataclass
@@ -34,13 +25,15 @@ from transformers import CLIPImageProcessor
 from src.models.mutual_self_attention import ReferenceAttentionControl
 from src.pipelines.context import get_context_scheduler
 from src.pipelines.utils import get_tensor_interpolation_method
+from src.utils.step_func import origin_by_velocity_and_sample, psuedo_velocity_wrt_noisy_and_timestep, get_alpha
+
 
 @dataclass
-class Audio2VideoPipelineOutput(BaseOutput):
+class AudioPose2VideoPipelineOutput(BaseOutput):
     videos: Union[torch.Tensor, np.ndarray]
 
 
-class Audio2VideoPipeline(DiffusionPipeline):
+class AudioPose2VideoPipeline(DiffusionPipeline):
     _optional_components = []
 
     def __init__(
@@ -50,6 +43,7 @@ class Audio2VideoPipeline(DiffusionPipeline):
         denoising_unet,
         audio_guider,
         face_locator,
+        # audio_feature_mapper,
         scheduler: Union[
             DDIMScheduler,
             PNDMScheduler,
@@ -74,9 +68,9 @@ class Audio2VideoPipeline(DiffusionPipeline):
             image_proj_model=image_proj_model,
             tokenizer=tokenizer,
             text_encoder=text_encoder,
+            # audio_feature_mapper=audio_feature_mapper
         )
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-        self.clip_image_processor = CLIPImageProcessor()
         self.ref_image_processor = VaeImageProcessor(
             vae_scale_factor=self.vae_scale_factor, do_convert_rgb=True
         )
@@ -116,6 +110,7 @@ class Audio2VideoPipeline(DiffusionPipeline):
         video_length = latents.shape[2]
         latents = 1 / 0.18215 * latents
         latents = rearrange(latents, "b c f h w -> (b f) c h w")
+        # video = self.vae.decode(latents).sample
         video = []
         for frame_idx in tqdm(range(latents.shape[0])):
             video.append(self.vae.decode(latents[frame_idx : frame_idx + 1]).sample)
@@ -147,6 +142,42 @@ class Audio2VideoPipeline(DiffusionPipeline):
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
 
+    def prepare_latents_bp(
+        self,
+        batch_size,
+        num_channels_latents,
+        width,
+        height,
+        video_length,
+        dtype,
+        device,
+        generator,
+        latents=None,
+    ):
+        shape = (
+            batch_size,
+            num_channels_latents,
+            video_length,
+            height // self.vae_scale_factor,
+            width // self.vae_scale_factor,
+        )
+        if isinstance(generator, list) and len(generator) != batch_size:
+            raise ValueError(
+                f"You have passed a list of generators of length {len(generator)}, but requested an effective batch"
+                f" size of {batch_size}. Make sure the batch size matches the length of the generators."
+            )
+
+        if latents is None:
+            latents = randn_tensor(
+                shape, generator=generator, device=device, dtype=dtype
+            )
+        else:
+            latents = latents.to(device)
+
+        # scale the initial noise by the standard deviation required by the scheduler
+        latents = latents * self.scheduler.init_noise_sigma
+        return latents
+
     def prepare_latents(
         self,
         batch_size,
@@ -156,7 +187,8 @@ class Audio2VideoPipeline(DiffusionPipeline):
         video_length,
         dtype,
         device,
-        generator
+        generator,
+        context_frame_length
     ):
         shape = (
             batch_size,
@@ -177,10 +209,11 @@ class Audio2VideoPipeline(DiffusionPipeline):
             shape, generator=generator, device=device, dtype=dtype
         )
         latents = latents_seg
-        latents = torch.clamp(latents, -1.5, 1.5)
-        latents = latents * self.scheduler.init_noise_sigma
-        return latents
 
+        # scale the initial noise by the standard deviation required by the scheduler
+        latents = latents * self.scheduler.init_noise_sigma
+        print(f"latents shape:{latents.shape}, video_length:{video_length}")
+        return latents
     def _encode_prompt(
         self,
         prompt,
@@ -396,11 +429,10 @@ class Audio2VideoPipeline(DiffusionPipeline):
 
         whisper_chunks = self.audio_guider.feature2chunks(feature_array=whisper_feature, fps=fps)
 
-        print("whisper_chunks:", whisper_chunks.shape)
         audio_frame_num = whisper_chunks.shape[0]
         audio_fea_final = torch.Tensor(whisper_chunks).to(dtype=self.vae.dtype, device=self.vae.device)
         audio_fea_final = audio_fea_final.unsqueeze(0)
-        print("audio_fea_final:", audio_fea_final.shape)
+        
         video_length = min(video_length, audio_frame_num)
         if video_length < audio_frame_num:
             audio_fea_final = audio_fea_final[:, :video_length, :, :]
@@ -414,19 +446,18 @@ class Audio2VideoPipeline(DiffusionPipeline):
             video_length,
             audio_fea_final.dtype,
             device,
-            generator
+            generator,
+            context_frames
         )
-        # print(video_length, latents.shape)
-        c_face_locator_tensor = self.face_locator(face_mask_tensor)
-        uc_face_locator_tensor = torch.zeros_like(c_face_locator_tensor)
-        face_locator_tensor = torch.cat([uc_face_locator_tensor, c_face_locator_tensor], dim=0)
-        # Prepare extra step kwargs.
+        
+        face_locator_tensor = self.face_locator(face_mask_tensor)
+        
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
 
         # Prepare ref image latents
         ref_image_tensor = self.ref_image_processor.preprocess(
             ref_image, height=height, width=width
-        )
+        )  # (bs, c, width, height)
         ref_image_tensor = ref_image_tensor.to(
             dtype=self.vae.dtype, device=self.vae.device
         )
@@ -447,11 +478,10 @@ class Audio2VideoPipeline(DiffusionPipeline):
                 context_overlap,
             )
         )
-        print("ref_image_latents shape:", ref_image_latents.shape)
-        print("face_mask_tensor shape:", face_mask_tensor.shape)
-        print("face_locator_tensor shape:", face_locator_tensor.shape)
+        
         with self.progress_bar(total=num_inference_steps) as progress_bar:
             for t_i, t in enumerate(timesteps):
+
                 noise_pred = torch.zeros(
                     (
                         latents.shape[0] * (2 if do_classifier_free_guidance else 1),
@@ -487,31 +517,41 @@ class Audio2VideoPipeline(DiffusionPipeline):
                         ]
                     )
 
+                ## refine
                 for context in global_context:
                     new_context = [[0 for _ in range(len(context[c_j]))] for c_j in range(len(context))]
                     for c_j in range(len(context)):
                         for c_i in range(len(context[c_j])):
-                            new_context[c_j][c_i] = (context[c_j][c_i] + t_i * 2) % video_length
+                            new_context[c_j][c_i] = (context[c_j][c_i] + t_i * 3) % video_length
+        
 
                     latent_model_input = (
                         torch.cat([latents[:, :, c] for c in new_context])
                         .to(device)
                         .repeat(2 if do_classifier_free_guidance else 1, 1, 1, 1, 1)
                     )
-                    c_audio_latents = torch.cat([audio_fea_final[:, c] for c in new_context]).to(device)
-                    audio_latents = torch.cat([torch.zeros_like(c_audio_latents), c_audio_latents], 0)
+
+                    audio_latents_cond = torch.cat([audio_fea_final[:, c] for c in new_context]).to(device)
+                    audio_latents = torch.cat([torch.zeros_like(audio_latents_cond), audio_latents_cond], 0)
+                    pose_latents_cond = torch.cat([face_locator_tensor[:, :, c] for c in new_context]).to(device)
+                    pose_latents = torch.cat([torch.zeros_like(pose_latents_cond), pose_latents_cond], 0)
 
                     latent_model_input = self.scheduler.scale_model_input(
                         latent_model_input, t
                     )
+                    b, c, f, h, w = latent_model_input.shape
                     pred = self.denoising_unet(
                         latent_model_input,
                         t,
                         encoder_hidden_states=None,
-                        audio_cond_fea=audio_latents if do_classifier_free_guidance else c_audio_latents,
-                        face_musk_fea=face_locator_tensor if do_classifier_free_guidance else c_face_locator_tensor,
+                        audio_cond_fea=audio_latents if do_classifier_free_guidance else audio_latents_cond,
+                        face_musk_fea=pose_latents if do_classifier_free_guidance else pose_latents_cond,
                         return_dict=False,
                     )[0]
+
+                    alphas_cumprod = self.scheduler.alphas_cumprod.to(latent_model_input.device)
+                    x_pred = origin_by_velocity_and_sample(pred, latent_model_input, alphas_cumprod, t)
+                    pred = psuedo_velocity_wrt_noisy_and_timestep(latent_model_input, x_pred, alphas_cumprod, t, torch.ones_like(t) * (-1))
 
                     for j, c in enumerate(new_context):
                         noise_pred[:, :, c] = noise_pred[:, :, c] + pred
@@ -523,6 +563,8 @@ class Audio2VideoPipeline(DiffusionPipeline):
                     noise_pred = noise_pred_uncond + guidance_scale * (
                         noise_pred_text - noise_pred_uncond
                     )
+                else:
+                    noise_pred = noise_pred / counter
 
                 latents = self.scheduler.step(
                     noise_pred, t, latents, **extra_step_kwargs
@@ -548,39 +590,4 @@ class Audio2VideoPipeline(DiffusionPipeline):
         if not return_dict:
             return images
 
-        return Audio2VideoPipelineOutput(videos=images)
-
-    def smooth_f_axis(self, tensor, smoothing_coef=0.2):
-        """
-        对5维tensor的F轴进行平滑，首尾帧保持原始值，其他帧应用平滑操作。
-
-        参数:
-        tensor -- 输入的5D Tensor，形状为(B, C, F, W, H)
-        smoothing_coef -- 平滑前后帧的系数，默认为0.3
-
-        返回:
-        smoothed_tensor -- 平滑后的5D Tensor
-        """
-        # 生成平滑核
-        weight_kernel = torch.tensor([smoothing_coef, 1 - 2 * smoothing_coef, smoothing_coef],
-                                     device=tensor.device, dtype=tensor.dtype).view(1, 1, -1)
-
-        b, c, f, w, h = tensor.size()
-
-        # 对于第三轴（F轴）仅平滑内部帧 (1:-1)
-        # 首先，移动要平滑的轴到最后一个维度以便应用conv1d
-        tensor_moved = rearrange(tensor, "b c f h w -> b (c h w) f")
-
-        # 对除了两端帧外的所有帧应用conv1d
-        internal_frames = F.conv1d(tensor_moved, weight_kernel)
-        print("tensor:", tensor.shape)
-
-        # 重新整理输出形状为 (B, F, C, W, H)
-        internal_frames = rearrange(internal_frames, "b (c h w) f -> b c f h w", c=c, h=h, w=w)
-        print("internal_frames:", internal_frames.shape)
-        # 将第一帧和最后一帧保持不变，合并结果
-        # 首帧 tensor[:, :, 0:1, :, :], 中间帧 internal_frames[:, :, 1:-1, :, :], 最后帧 tensor[:, :, -1:, :, :]
-        smoothed_tensor = torch.cat(
-            [tensor[:, :, 0:1, :, :], internal_frames, tensor[:, :, -1:, :, :]], dim=2)
-
-        return smoothed_tensor
+        return AudioPose2VideoPipelineOutput(videos=images)

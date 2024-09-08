@@ -14,42 +14,28 @@
 <div align='center'>
 Terminal Technology Department, Alipay, Ant Group.
 </div>
-
+<br>
 <div align='center'>
     <a href='https://badtobest.github.io/echomimic.html'><img src='https://img.shields.io/badge/Project-Page-blue'></a>
     <a href='https://huggingface.co/BadToBest/EchoMimic'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Model-yellow'></a>
+    <a href='https://huggingface.co/spaces/BadToBest/EchoMimic'><img src='https://img.shields.io/badge/%F0%9F%A4%97%20HuggingFace-Demo-yellow'></a>
+    <a href='https://www.modelscope.cn/models/BadToBest/EchoMimic'><img src='https://img.shields.io/badge/ModelScope-Model-purple'></a>
+    <a href='https://www.modelscope.cn/studios/BadToBest/BadToBest'><img src='https://img.shields.io/badge/ModelScope-Demo-purple'></a>
     <a href='https://arxiv.org/abs/2407.08136'><img src='https://img.shields.io/badge/Paper-Arxiv-red'></a>
-    <a href='assets/echomimic.png'><img src='https://badges.aleen42.com/src/wechat.svg'></a>
 </div>
 
 ## &#x1F4E3; &#x1F4E3; Updates
-### 24.07.14
-#### ComfyUI Version
-
-ComfyUI version EchoMimic was provided by @smthemex at https://github.com/smthemex/ComfyUI_EchoMimic , Thanks for his contribution !!!
-
-### 24.07.13
-#### Pose Driven Released
-
-Codes and Models on pose-driven algo was released !!!
-
-#### [Video Installation Tutorial](https://www.youtube.com/watch?v=8R0lTIY7tfI) from the Community
-
-Thanks for [NewGenAI](https://www.youtube.com/@StableAIHub) who is the maker of video tutorial and @oisilener1982 who introduces it !! https://github.com/BadToBest/EchoMimic/issues/31
-
-### 24.07.12 
-#### (1) Gradio or Webui version
-There are numerous developers actively engaged in projects centered around EchoMimic, and we are compelled to express our profound gratitude for their invaluable contributions. In acknowledgment of their efforts, we are pleased to highlight a selection of exemplary repositories below. These repositories have significantly augmented the capabilities of EchoMimic, thereby enhancing its potency and versatility in application.
-
-WebUi version from @greengerong : https://github.com/greengerong/EchoMimic
-
-Gradio UI commit from @Robin021 : https://github.com/BadToBest/EchoMimic/blob/main/webgui.py
-
-Code contribution in issue from @O-O1024 : https://github.com/BadToBest/EchoMimic/issues/22
-
-#### (2) Our Paper is Released!
-
-Arxiv link:https://arxiv.org/abs/2407.08136
+* [2024.08.02] 🔥 EchoMimic is now available on [huggingface](https://huggingface.co/spaces/BadToBest/EchoMimic) with A100 GPU. Thanks Wenmeng Zhou@ModelScope.
+* [2024.07.25] 🔥🔥🔥 Accelerated models and pipe on **Audio Driven** are released. The inference speed can be improved by **10x** (from ~7mins/240frames to ~50s/240frames on V100 GPU)
+* [2024.07.23] 🔥 EchoMimic gradio demo on [modelscope](https://www.modelscope.cn/studios/BadToBest/BadToBest) is ready.
+* [2024.07.23] 🔥 EchoMimic gradio demo on [huggingface](https://huggingface.co/spaces/fffiloni/EchoMimic) is ready. Thanks Sylvain Filoni@fffiloni.
+* [2024.07.17] 🔥🔥🔥 Accelerated models and pipe on **Audio + Selected Landmarks** are released. The inference speed can be improved by **10x** (from ~7mins/240frames to ~50s/240frames on V100 GPU)
+* [2024.07.14] 🔥 [ComfyUI](https://github.com/smthemex/ComfyUI_EchoMimic) is now available. Thanks @smthemex for the contribution. 
+* [2024.07.13] 🔥 Thanks [NewGenAI](https://www.youtube.com/@StableAIHub) for the [video installation tutorial](https://www.youtube.com/watch?v=8R0lTIY7tfI).
+* [2024.07.13] 🔥 We release our pose&audio driven codes and models.
+* [2024.07.12] 🔥 WebUI and GradioUI versions are released. We thank @greengerong @Robin021 and @O-O1024 for their contributions.
+* [2024.07.12] 🔥 Our [paper](https://arxiv.org/abs/2407.08136) is in public on arxiv.
+* [2024.07.09] 🔥 We release our audio driven codes and models.
 
 ## Gallery
 ### Audio Driven (Sing)
@@ -267,8 +253,8 @@ python -u webgui.py --server_port=3000
 |    ✅    | Pretrained models trained on English and Mandarin Chinese to be released | 9th July, 2024 |
 |    ✅    | The inference source code of the Pose-Driven algo meet everyone on GitHub   | 13th July, 2024 |
 |    ✅    | Pretrained models with better pose control to be released                | 13th July, 2024 |
+|    ✅    | Accelerated models to be released                                        | 17th July, 2024 |
 |    🚀    | Pretrained models with better sing performance to be released            | TBD |
-|    🚀    | Accelerated models to be released                                        | TBD |
 |    🚀    | Large-Scale and High-resolution Chinese-Based Talking Head Dataset       | TBD |
 
 ## Acknowledgements
@@ -292,3 +278,7 @@ If you find our work useful for your research, please consider citing the paper 
   primaryClass={cs.CV}
 }
 ```
+
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=BadToBest/EchoMimic&type=Date)](https://star-history.com/?spm=5176.28103460.0.0.342a3da23STWrU#BadToBest/EchoMimic&Date)
