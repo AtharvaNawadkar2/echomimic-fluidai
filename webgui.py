@@ -5,7 +5,7 @@ webui
 '''
 
 import os
-import random
+import random   
 from datetime import datetime
 from pathlib import Path
 
@@ -24,8 +24,8 @@ from src.models.face_locator import FaceLocator
 from moviepy.editor import VideoFileClip, AudioFileClip
 from facenet_pytorch import MTCNN
 import argparse
-
 import gradio as gr
+import requests
 
 default_values = {
     "width": 512,
@@ -164,8 +164,8 @@ def process_video(uploaded_img, uploaded_audio, width, height, length, seed, fac
         r_pad_crop = int((re - rb) * facecrop_dilation_ratio)
         c_pad_crop = int((ce - cb) * facecrop_dilation_ratio)
         crop_rect = [max(0, cb - c_pad_crop), max(0, rb - r_pad_crop), min(ce + c_pad_crop, face_img.shape[1]), min(re + r_pad_crop, face_img.shape[0])]
-        face_img = crop_and_pad(face_img, crop_rect)
-        face_mask = crop_and_pad(face_mask, crop_rect)
+        face_img, _ = crop_and_pad(face_img, crop_rect)
+        face_mask, _ = crop_and_pad(face_mask, crop_rect)
         face_img = cv2.resize(face_img, (width, height))
         face_mask = cv2.resize(face_mask, (width, height))
 
@@ -201,13 +201,53 @@ def process_video(uploaded_img, uploaded_audio, width, height, length, seed, fac
 
     return final_output_path
   
+# Add this function to make API requests
+def make_api_request(api_url, files=None, json=None):
+    try:
+        if files:
+            response = requests.post(api_url, files=files)
+        else:
+            response = requests.post(api_url, json=json)
+        response.raise_for_status()
+        return response.content
+    except requests.RequestException as e:
+        return f"Error: {str(e)}"
+
+# Modify the generate_video function
+def generate_video(input_type, uploaded_img, uploaded_audio, input_text, width, height, length, seed, facemask_dilation_ratio, facecrop_dilation_ratio, context_frames, context_overlap, cfg, steps, sample_rate, fps, device):
+    if input_type == "Audio":
+        api_url = "http://localhost:8000/process_audio_image"
+        files = {
+            "image": ("image.jpg", open(uploaded_img, "rb")),
+            "audio": ("audio.wav", open(uploaded_audio, "rb"))
+        }
+        response = make_api_request(api_url, files=files)
+    else:  # Text
+        api_url = "http://localhost:8000/text_to_video"
+        files = {
+            "image": ("image.jpg", open(uploaded_img, "rb"))
+        }
+        json_data = {"text": input_text}
+        response = make_api_request(api_url, files=files, json=json_data)
+
+    if isinstance(response, bytes):
+        output_path = "output/generated_video.mp4"
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        with open(output_path, "wb") as f:
+            f.write(response)
+        return output_path
+    else:
+        return response  # This will be an error message
+
 with gr.Blocks() as demo:
     gr.Markdown('# EchoMimic')
-    gr.Markdown('![]()')
+    
     with gr.Row():
         with gr.Column():
+            input_type = gr.Radio(["Audio", "Text"], label="Input Type", value="Audio")
             uploaded_img = gr.Image(type="filepath", label="Reference Image")
-            uploaded_audio = gr.Audio(type="filepath", label="Input Audio")
+            uploaded_audio = gr.Audio(type="filepath", label="Input Audio", visible=True)
+            input_text = gr.Textbox(label="Input Text", visible=False)
         with gr.Column():
             output_video = gr.Video()
 
@@ -228,19 +268,21 @@ with gr.Blocks() as demo:
 
     generate_button = gr.Button("Generate Video")
 
-    def generate_video(uploaded_img, uploaded_audio, width, height, length, seed, facemask_dilation_ratio, facecrop_dilation_ratio, context_frames, context_overlap, cfg, steps, sample_rate, fps, device):
+    def update_input_type(choice):
+        return {
+            uploaded_audio: gr.update(visible=choice == "Audio"),
+            input_text: gr.update(visible=choice == "Text")
+        }
 
-        final_output_path = process_video(
-            uploaded_img, uploaded_audio, width, height, length, seed, facemask_dilation_ratio, facecrop_dilation_ratio, context_frames, context_overlap, cfg, steps, sample_rate, fps, device
-        )        
-        output_video= final_output_path
-        return final_output_path
+    input_type.change(update_input_type, inputs=[input_type], outputs=[uploaded_audio, input_text])
 
     generate_button.click(
         generate_video,
         inputs=[
+            input_type,
             uploaded_img,
             uploaded_audio,
+            input_text,
             width,
             height,
             length,
